@@ -1,248 +1,250 @@
 import tkinter as tk
-from tkinter import scrolledtext, messagebox
+from tkinter import ttk, scrolledtext, messagebox
 import threading
 import nmap
 from openai import OpenAI
 import time
 import requests
+import datetime
+import subprocess
 from PIL import Image, ImageTk
 from zapv2 import ZAPv2
-import subprocess
-import os
 
 # --- 1. НАСТРОЙКИ ---
-client = OpenAI(
-    base_url="http://localhost:11434/v1",
-    api_key="ollama",
-)
+client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
 MODEL_NAME = "qwen2.5:3b"
+ZAP_PATH = r"C:\Program Files\ZAP\Zed Attack Proxy\zap.bat" 
 
-# Путь к ZAP (проверь, совпадает ли он у тебя)
-ZAP_PATH = r"C:\Program Files\ZAP\Zed Attack Proxy\zap.bat"
-
-# --- 2. АВТОЗАПУСК ZAP ---
+# --- 2. ЛОГИКА (ФУНКЦИИ) ---
 def start_zap():
-    update_log("[*] Проверяю, запущен ли ZAP...\n")
+    log_web("[*] Проверяю ZAP...\n")
     try:
-        # Пытаемся подключиться к ZAP
-        zap = ZAPv2(proxies={'http': 'http://127.0.0.1:8080', 'https': 'http://127.0.0.1:8080'})
-        zap.core.version
-        update_log("[+] ZAP уже работает!\n")
-        return True
-    except:
-        update_log("[*] ZAP не найден. Запускаю в фоне (подожди 15 сек)...\n")
-        try:
-            # Запускаем ZAP без открытия окна
-            subprocess.Popen([ZAP_PATH, "-daemon", "-port", "8080"],
-                             creationflags=subprocess.CREATE_NO_WINDOW)
-            time.sleep(15) # Ждем загрузки ZAP
-            return True
-        except Exception as e:
-            update_log(f"[!] Ошибка запуска ZAP: {e}\n")
-            return False
+        requests.get("http://127.0.0.1:8080", timeout=2)
+        log_web("[*] ZAP уже работает.\n")
+    except requests.exceptions.ConnectionError:
+        log_web("[*] Запускаю ZAP в фоне (15 сек)...\n")
+        subprocess.Popen([ZAP_PATH, "-daemon", "-port", "8080"], creationflags=subprocess.CREATE_NO_WINDOW)
+        time.sleep(15)
 
-# --- 3. ФУНКЦИИ СКАНИРОВАНИЯ ---
-def scan_ports(target):
-    update_log(f"[*] Запускаю Nmap для {target}...\n")
-    nm = nmap.PortScanner()
-    try:
-        nm.scan(hosts=target, arguments='-sV -F')
-        results = ""
-        for host in nm.all_hosts():
-            results += f"Хост: {host}\n"
-            for proto in nm[host].all_protocols():
-                ports = nm[host][proto].keys()
-                for port in ports:
-                    state = nm[host][proto][port]['state']
-                    service = nm[host][proto][port]['name']
-                    results += f"  Порт {port}/{proto}: {state} ({service})\n"
-        if not results:
-            return "Nmap не нашел открытых портов."
-        return results
-    except Exception as e:
-        return f"Ошибка Nmap: {e}"
-
-def scan_zap(target):
-    update_log(f"[*] Подключаюсь к ZAP для {target}...\n")
-    zap = ZAPv2(proxies={'http': 'http://127.0.0.1:8080', 'https': 'http://127.0.0.1:8080'})
- 
-    if not target.startswith("http"):
-        target = "http://" + target
-
-    try:
-        zap.urlopen(target)
-        time.sleep(2)
- 
-        update_log("[*] ZAP: Ищу страницы на сайте (Spider)...\n")
-        scan_id = zap.spider.scan(target)
-        while int(zap.spider.status(scan_id)) < 100:
-            time.sleep(2)
- 
-        update_log("[*] ZAP: Проверяю уязвимости (Active Scan)...\n")
-        scan_id = zap.ascan.scan(target)
-        while int(zap.ascan.status(scan_id)) < 100:
-            time.sleep(3)
- 
-        alerts = zap.core.alerts(baseurl=target)
- 
-        if not alerts:
-            return "ZAP не нашел уязвимостей."
- 
-        report = ""
-        for alert in alerts:
-            report += f"Уязвимость: {alert['alert']}\n"
-            report += f"  Риск: {alert['risk']}\n"
-            report += f"  URL: {alert['url']}\n"
-        return report
-    except Exception as e:
-        return f"Ошибка ZAP: {e}"
-
-def check_weak_passwords(target_url, username="admin"):
-    update_log(f"[*] Проверяю слабые пароли на {target_url}...\n")
-    if not target_url.startswith("http"):
-        target_url = "http://" + target_url
-
-    try:
-        with open("passwords.txt", "r", encoding="utf-8") as f:
-            passwords = [line.strip() for line in f.readlines()]
-    except FileNotFoundError:
-        return "Ошибка: Файл passwords.txt не найден."
-
-    passwords = passwords[:10]
-    found = []
- 
-    for pwd in passwords:
-        data = {"username": username, "password": pwd}
-        try:
-            response = requests.post(target_url, data=data, timeout=3)
-            if "Welcome" in response.text or response.status_code == 302:
-                found.append(pwd)
-                break
-        except requests.exceptions.RequestException:
-            pass
-
-    if found:
-        return f"КРИТИЧЕСКАЯ УЯЗВИМОСТЬ: Найден слабый пароль '{found[0]}' для пользователя {username}."
-    return "Проверка паролей пройдена. Слабых паролей из топ-10 не найдено."
-
-# --- 4. НЕЙРОСЕТЬ ---
 def generate_report(target, nmap_results, zap_results, pass_results):
-    update_log("[*] Отправляю данные нейросети для анализа... (это может занять время)\n")
- 
+    log_web("[*] Нейросеть анализирует данные...\n")
     prompt = f"""
-    Ты — опытный пентестер. Твоя задача — написать отчет для клиента.
+    Ты — опытный пентестер. Напиши отчет.
     Цель: {target}
- 
-    Результаты Nmap (открытые порты):
-    {nmap_results}
- 
-    Результаты ZAP (веб-уязвимости):
-    {zap_results}
- 
-    Результаты проверки паролей:
-    {pass_results}
- 
-    Напиши отчет по структуре:
-    1. Резюме (насколько безопасна цель).
-    2. Найденные уязвимости (объясни простым языком, чем они опасны).
-    3. Рекомендации по исправлению.
+    Nmap: {nmap_results}
+    ZAP: {zap_results}
+    Пароли: {pass_results}
+    Структура: 1. Резюме. 2. Уязвимости. 3. Рекомендации.
     """
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME,
-            messages=[
-                {"role": "system", "content": "Ты — эксперт по кибербезопасности. Пиши четко и по делу на русском языке."},
-                {"role": "user", "content": prompt}
-            ],
+            messages=[{"role": "system", "content": "Ты эксперт по ИБ."}, {"role": "user", "content": prompt}],
             temperature=0.4
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"Ошибка нейросети: {e}"
+        return f"Ошибка ИИ: {e}"
 
-# --- 5. ЛОГИКА ИНТЕРФЕЙСА ---
-def update_log(message):
-    chat_area.config(state=tk.NORMAL)
-    chat_area.insert(tk.END, message)
-    chat_area.see(tk.END)
-    chat_area.config(state=tk.DISABLED)
-
-def run_scan():
+# --- 3. ВКЛАДКА 1: WEB PENTEST ---
+def run_web_scan():
     target = entry_target.get().strip()
-    if not target:
-        messagebox.showwarning("Ошибка", "Введите IP-адрес или домен!")
-        return
- 
-    chat_area.config(state=tk.NORMAL)
-    chat_area.delete(1.0, tk.END)
-    chat_area.config(state=tk.DISABLED)
- 
-    btn_start.config(state=tk.DISABLED, text="Сканирую...")
- 
-    def scan_thread():
-        update_log(f"=== НАЧАЛО СКАНИРОВАНИЯ {target} ===\n")
- 
-        # Автозапуск ZAP
-        if not start_zap():
-            update_log("[!] Сканирование ZAP будет пропущено.\n")
-            zap_data = "ZAP не запущен."
-        else:
-            zap_data = scan_zap(target)
- 
-        nmap_data = scan_ports(target)
-        pass_data = check_weak_passwords(target)
- 
-        report = generate_report(target, nmap_data, zap_data, pass_data)
- 
-        update_log("\n" + "="*40 + "\n")
-        update_log("ОТЧЕТ ДЛЯ КЛИЕНТА:\n")
-        update_log("="*40 + "\n")
-        update_log(report + "\n")
- 
-        with open("report.md", "w", encoding="utf-8") as f:
-            f.write(report)
-        update_log("\n[*] Отчет также сохранен в файл report.md\n")
- 
-        btn_start.config(state=tk.NORMAL, text="Запустить сканирование")
- 
-    threading.Thread(target=scan_thread, daemon=True).start()
+    if not target: return
+    
+    log_web(f"=== СКАНИРОВАНИЕ {target} ===\n")
+    btn_web.config(state=tk.DISABLED, text="Сканирую...")
 
-# --- 6. ОКНО (ИНТЕРФЕЙС) ---
+    def thread():
+        start_zap()
+        
+        # Nmap
+        log_web("[*] Nmap сканирует порты...\n")
+        nm = nmap.PortScanner(nmap_search_path=[r"C:\Program Files (x86)\Nmap\nmap.exe"])
+        try:
+            nm.scan(hosts=target, arguments='-sV -F')
+            nmap_data = str(nm.all_hosts())
+        except Exception as e:
+            nmap_data = f"Ошибка Nmap: {e}"
+        
+        # ZAP
+        log_web("[*] ZAP ищет уязвимости...\n")
+        zap = ZAPv2(proxies={'http': 'http://127.0.0.1:8080', 'https': 'http://127.0.0.1:8080'})
+        if not target.startswith("http"): target = "http://" + target
+        try:
+            zap.spider.scan(target)
+            time.sleep(5) # Для теста
+            alerts = zap.core.alerts(baseurl=target)
+            zap_data = str(alerts[:3]) if alerts else "Уязвимостей нет."
+        except Exception as e:
+            zap_data = f"Ошибка ZAP: {e}"
+            
+        # Пароли (упрощенно)
+        pass_data = "Проверка паролей (заглушка)."
+
+        # ИИ
+        report = generate_report(target, nmap_data, zap_data, pass_data)
+        log_web("\n" + "="*40 + "\n" + report)
+        
+        btn_web.config(state=tk.NORMAL, text="Запустить Web Scan")
+
+    threading.Thread(target=thread, daemon=True).start()
+
+# --- 4. ВКЛАДКА 2: OSINT (SHERLOCK) ---
+def run_osint():
+    username = entry_osint.get().strip()
+    if not username: return
+    
+    log_osint(f"=== ПОИСК НИКНЕЙМА: {username} ===\n")
+    btn_osint.config(state=tk.DISABLED, text="Ищу...")
+
+    def thread():
+        # В реальности тут нужно вызывать Sherlock через subprocess
+        # Для теста имитируем работу
+        log_osint(f"[*] Запускаю Sherlock для {username}...\n")
+        time.sleep(3) 
+        
+        # Фейковый вывод для демонстрации
+        fake_result = f"""
+        [+] Найдено совпадение: https://github.com/{username}
+        [+] Найдено совпадение: https://www.instagram.com/{username}
+        [+] Найдено совпадение: https://vk.com/{username}
+        """
+        log_osint(fake_result)
+        log_osint("[*] Поиск завершен.\n")
+        
+        btn_osint.config(state=tk.NORMAL, text="Найти никнейм")
+
+    threading.Thread(target=thread, daemon=True).start()
+
+# --- 5. ВКЛАДКА 3: BRUTE FORCE ---
+
+def run_brute():
+    url = entry_brute_url.get().strip()
+    login = entry_brute_login.get().strip()
+    
+    if not url or not login: return
+
+    log_brute(f"=== ПОДБОР ПАРОЛЯ ДЛЯ {login} ===\n")
+    btn_brute.config(state=tk.DISABLED, text="Подбираю...")
+
+    def thread():
+        try:
+            with open("passwords.txt", "r", encoding="utf-8") as f:
+                passwords = [line.strip() for line in f.readlines()]
+        except FileNotFoundError:
+            log_brute("[-] Ошибка: Файл passwords.txt не найден.\n")
+            btn_brute.config(state=tk.NORMAL, text="Запустить Brute Force")
+            return
+
+        log_brute(f"[*] Загружено {len(passwords)} паролей.\n")
+        
+        # Имитация подбора (чтобы не забанили)
+        for pwd in passwords[:5]:
+            log_brute(f"[*] Пробую: {pwd}...\n")
+            time.sleep(1) # Задержка для эффекта
+            if pwd == "admin":
+                log_brute(f"[+] УСПЕХ! Пароль найден: {pwd}\n")
+                break
+        else:
+            log_brute("[-] Пароль не найден в словаре.\n")
+
+        btn_brute.config(state=tk.NORMAL, text="Запустить Brute Force")
+
+    threading.Thread(target=thread, daemon=True).start()
+
+
+# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ ЛОГОВ ---
+def log_web(msg):
+    log_area_web.config(state=tk.NORMAL)
+    log_area_web.insert(tk.END, msg)
+    log_area_web.see(tk.END)
+    log_area_web.config(state=tk.DISABLED)
+
+def log_osint(msg):
+    log_area_osint.config(state=tk.NORMAL)
+    log_area_osint.insert(tk.END, msg)
+    log_area_osint.see(tk.END)
+    log_area_osint.config(state=tk.DISABLED)
+
+def log_brute(msg):
+    log_area_brute.config(state=tk.NORMAL)
+    log_area_brute.insert(tk.END, msg)
+    log_area_brute.see(tk.END)
+    log_area_brute.config(state=tk.DISABLED)
+
+
+# --- 6. ГРАФИЧЕСКИЙ ИНТЕРФЕЙС ---
 root = tk.Tk()
-root.title("Miko AI Pentest")
-root.geometry("900x650")
+root.title("Miko AI Pentest - Pro Version")
+root.geometry("1000x700")
 root.configure(bg="#1e1e1e")
 
-# Загрузка картинки (просто имя файла, без путей)
+# Левая панель с Мику
 try:
-    avatar_img = Image.open("miko_avatar.png")
-    avatar_img = avatar_img.resize((220, 350))
+    avatar_img = Image.open("miko_avatar.png").resize((220, 350))
     avatar_photo = ImageTk.PhotoImage(avatar_img)
     avatar_label = tk.Label(root, image=avatar_photo, bg="#1e1e1e")
-    avatar_label.place(x=20, y=150)
-except Exception as e:
-    print(f"Картинка не найдена: {e}")
+    avatar_label.place(x=20, y=100)
+except:
+    pass
 
-# Правая панель
-right_frame = tk.Frame(root, bg="#1e1e1e")
-right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(260, 20), pady=10)
+# Главный контейнер для вкладок
+style = ttk.Style()
+style.theme_use('clam')
+style.configure("TNotebook", background="#1e1e1e", borderwidth=0)
+style.configure("TNotebook.Tab", background="#2b2b2b", foreground="#e0e0e0", padding=[10, 5])
+style.map("TNotebook.Tab", background=[("selected", "#42a994")], foreground=[("selected", "black")])
 
-title_label = tk.Label(right_frame, text="Miko AI Pentest Scanner", font=("Arial", 18, "bold"), bg="#1e1e1e", fg="#00ffcc")
-title_label.pack(pady=(0, 15))
+notebook = ttk.Notebook(root)
+notebook.place(x=260, y=20, width=720, height=660)
 
-frame_target = tk.Frame(right_frame, bg="#1e1e1e")
-frame_target.pack(pady=5, fill=tk.X)
+# --- Вкладка 1: Web Pentest ---
+tab_web = tk.Frame(notebook, bg="#1e1e1e")
+notebook.add(tab_web, text="Web Pentest")
 
-tk.Label(frame_target, text="Цель:", bg="#1e1e1e", fg="#e0e0e0", font=("Arial", 12)).pack(side=tk.LEFT)
-entry_target = tk.Entry(frame_target, width=35, font=("Arial", 12))
-entry_target.pack(side=tk.LEFT, padx=10)
-entry_target.insert(0, "127.0.0.1")
+tk.Label(tab_web, text="Цель (IP или домен):", bg="#1e1e1e", fg="#e0e0e0", font=("Arial", 12)).place(x=20, y=20)
+entry_target = tk.Entry(tab_web, width=30, font=("Arial", 12))
+entry_target.place(x=180, y=20)
+entry_target.insert(0, "testphp.vulnweb.com")
 
-btn_start = tk.Button(right_frame, text="Запустить сканирование", command=run_scan, bg="#00ffcc", fg="black", font=("Arial", 12, "bold"))
-btn_start.pack(pady=15)
+btn_web = tk.Button(tab_web, text="Запустить Web Scan", command=run_web_scan, bg="#00ffcc", fg="black", font=("Arial", 11, "bold"))
+btn_web.place(x=450, y=15)
 
-chat_area = scrolledtext.ScrolledText(right_frame, wrap=tk.WORD, bg="#2b2b2b", fg="#e0e0e0", font=("Consolas", 10))
-chat_area.pack(pady=5, fill=tk.BOTH, expand=True)
-chat_area.config(state=tk.DISABLED)
+log_area_web = scrolledtext.ScrolledText(tab_web, wrap=tk.WORD, bg="#2b2b2b", fg="#e0e0e0", font=("Consolas", 10))
+log_area_web.place(x=20, y=60, width=680, height=550)
+log_area_web.config(state=tk.DISABLED)
 
+# --- Вкладка 2: OSINT (Sherlock) ---
+tab_osint = tk.Frame(notebook, bg="#1e1e1e")
+notebook.add(tab_osint, text="OSINT (Sherlock)")
+
+tk.Label(tab_osint, text="Поиск по никнеймам скоро будет доступен!", 
+         bg="#1e1e1e", fg="#00ffcc", font=("Arial", 16, "bold")).place(x=180, y=200)
+
+tk.Label(tab_osint, text="Модуль находится в активной разработке.", 
+         bg="#1e1e1e", fg="#e0e0e0", font=("Arial", 12)).place(x=200, y=240)
+
+btn_osint = tk.Button(tab_osint, text="Найти никнейм (В разработке)", 
+                      state=tk.DISABLED, bg="#555555", fg="#aaaaaa", font=("Arial", 11, "bold"))
+btn_osint.place(x=250, y=300)
+
+# --- Вкладка 3: Brute Force ---
+tab_brute = tk.Frame(notebook, bg="#1e1e1e")
+notebook.add(tab_brute, text="Brute Force")
+
+# Заглушка "В разработке"
+tk.Label(tab_brute, text="Данный модуль находится в разработке...", 
+         bg="#1e1e1e", fg="#ff5555", font=("Arial", 16, "bold")).place(x=150, y=200)
+
+tk.Label(tab_brute, text="Скоро здесь появится возможность подбора паролей по словарю.", 
+         bg="#1e1e1e", fg="#e0e0e0", font=("Arial", 12)).place(x=100, y=240)
+
+# Оставляем кнопку, но делаем её неактивной (state=tk.DISABLED)
+btn_brute = tk.Button(tab_brute, text="Запустить Brute Force (В разработке)", 
+                      state=tk.DISABLED, bg="#555555", fg="#aaaaaa", font=("Arial", 11, "bold"))
+btn_brute.place(x=250, y=300)
+
+def on_cloing():
+    root.destroy()
+root.protocol("WM_DELETE_WINDOW",on_cloing)
 root.mainloop()
