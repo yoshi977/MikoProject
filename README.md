@@ -63,6 +63,7 @@ Because this tool relies on external security scanners and local AI, please ensu
 
 **1. Install Python dependencies**
 Open your terminal (or command prompt) and run this command:
+```bash
 **pip install python-nmap openai requests python-owasp-zap-v2.4 pillow**
 
 **2. Download the AI model**
