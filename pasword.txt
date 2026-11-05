@@ -1,0 +1,9 @@
+123456
+password
+admin
+kali
+qwerty
+Linux
+west
+east
+123456789
