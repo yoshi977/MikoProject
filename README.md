@@ -47,13 +47,6 @@ An automated penetration testing tool with a graphical user interface (GUI), des
 \*Disclaimer: This tool is created for educational purposes and authorized penetration testing only. Do not use it on websites without permission.\*
 
 
-
-
-
-
-
-
-
 ## Installation & Usage
 
 Because this tool relies on external security scanners and local AI, please ensure you have the following prerequisites installed on your system before running the script.
@@ -69,36 +62,22 @@ Because this tool relies on external security scanners and local AI, please ensu
 ### Step-by-Step Setup
 
 **1. Install Python dependencies**
-Open your terminal (or command prompt) and run:
-```bash
-pip install python-nmap openai requests python-owasp-zap-v2.4 pillow
+Open your terminal (or command prompt) and run this command:
+**pip install python-nmap openai requests python-owasp-zap-v2.4 pillow**
 
-
-**2. Download the AI model
+**2. Download the AI model**
 Make sure Ollama is running in the background, then open a terminal and download the model:
+**ollama pull qwen2.5:3b**
 
-bash
-ollama pull qwen2.5:3b
+**3. Prepare the configuration**
+* Create a file named passwords.txt in the same folder as kimo.py and add a list of common passwords (one per line).
+* Place your avatar image named miko_avatar.png in the same folder.
 
-
-
-3. Prepare the configuration
-
-Create a file named passwords.txt in the same folder as kimo.py and add a list of common passwords (one per line).
-
-Place your avatar image named miko_avatar.png in the same folder.
-
-
-
-
-4. Run the application
+**4. Run the application**
 Open a terminal in the project folder and run:
+**python kimo.py**
 
-bash
-python kimo.py
-Note: The application will automatically start OWASP ZAP in the background (daemon mode) on port 8080 when you click "Start Scan".
-
-
+*Note: The application will automatically start OWASP ZAP in the background (daemon mode) on port 8080 when you click "Start Scan".*
 
 
 
